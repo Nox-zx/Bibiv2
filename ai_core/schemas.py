@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -22,6 +22,11 @@ class RelationshipUpdate(BaseModel):
     impression: str | None = Field(default=None, max_length=400)
 
 
+class ActionParameter(BaseModel):
+    key: str = Field(min_length=1, max_length=80)
+    value: str = Field(default="", max_length=300)
+
+
 class ActionProposal(BaseModel):
     type: Literal[
         "reply",
@@ -32,7 +37,7 @@ class ActionProposal(BaseModel):
         "change_channel",
     ]
     target: str | None = None
-    parameters: dict[str, Any] = Field(default_factory=dict)
+    parameters: list[ActionParameter] = Field(default_factory=list, max_length=10)
     reason: str = Field(default="", max_length=300)
 
 
