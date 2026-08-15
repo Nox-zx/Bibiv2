@@ -6,6 +6,7 @@ from datetime import datetime, timezone, timedelta
 import discord
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from ai_core.gateway import GeminiQuotaExceeded, GeminiTemporarilyUnavailable
 from database.models import ChannelState, MessageRecord
 from database.repositories import get_or_create_channel_state, get_or_create_user
 from mind.context import build_cognitive_context
@@ -14,6 +15,10 @@ from safety.guard import SafetyGuard
 
 LOGGER = logging.getLogger(__name__)
 
+# Prevent a quota/failure fallback from becoming spam when a channel is active.
+_FALLBACK_COOLDOWN_SECONDS = 300
+_fallback_sent_at: dict[int, datetime] = {}
+
 
 def _as_utc(value: datetime | None) -> datetime | None:
     if value is None:
@@ -21,6 +26,15 @@ def _as_utc(value: datetime | None) -> datetime | None:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+def _should_fallback(channel_id: int) -> bool:
+    now = datetime.now(timezone.utc)
+    previous = _fallback_sent_at.get(channel_id)
+    if previous and (now - previous).total_seconds() < _FALLBACK_COOLDOWN_SECONDS:
+        return False
+    _fallback_sent_at[channel_id] = now
+    return True
 
 
 async def handle_message(
@@ -96,6 +110,27 @@ async def handle_message(
         context = await build_cognitive_context(session, perception, attention_state=attention_state)
         try:
             decision = await cognitive_mind.decide(context)
+        except GeminiQuotaExceeded:
+            LOGGER.warning(
+                "Gemini daily quota exhausted; skipping cognitive response for message %s",
+                message.id,
+            )
+            if (mentioned or is_reply) and _should_fallback(message.channel.id):
+                await message.reply(
+                    "tô sem cérebro por agora kkkk tenta falar comigo mais tarde",
+                    mention_author=False,
+                )
+            await session.commit()
+            return
+        except GeminiTemporarilyUnavailable:
+            LOGGER.exception("Gemini temporarily unavailable for message %s", message.id)
+            if (mentioned or is_reply) and _should_fallback(message.channel.id):
+                await message.reply(
+                    "pera aí, meu cérebro deu uma engasgada kkkk",
+                    mention_author=False,
+                )
+            await session.commit()
+            return
         except Exception:
             LOGGER.exception("Cognitive call failed for message %s", message.id)
             await session.commit()
