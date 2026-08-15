@@ -7,6 +7,7 @@ from discord import app_commands
 
 from ai_core.cognitive import CognitiveMind
 from ai_core.gateway import GeminiGateway
+from bot.commands import register_commands
 from config.settings import Settings
 from database.engine import create_engine, create_session_factory, init_db
 from bot.events import handle_message
@@ -34,12 +35,20 @@ class BibiClient(discord.Client):
 
     async def setup_hook(self) -> None:
         await init_db(self.db_engine)
+
+        # Remove stale global commands left by older versions of the bot.
+        self.tree.clear_commands(guild=None)
+        await self.tree.sync()
+
         if self.settings.guild_id:
             guild = discord.Object(id=self.settings.guild_id)
-            self.tree.copy_global_to(guild=guild)
+            self.tree.clear_commands(guild=guild)
+            register_commands(self.tree, guild=guild)
             await self.tree.sync(guild=guild)
         else:
+            register_commands(self.tree)
             await self.tree.sync()
+
         LOGGER.info("Bibi setup complete")
 
     async def on_ready(self) -> None:
