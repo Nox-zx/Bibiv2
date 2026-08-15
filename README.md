@@ -11,6 +11,13 @@ Primeiro núcleo funcional da Bibi: Discord + SQLite + Gemini Cognitivo.
 - Memória inicial: ligada
 - Reflexiva: schema + gateway prontos; ciclo de reflexão ainda será conectado
 - Jogos/economia: ainda não implementados
+- Protecção de quota: activa
+
+## Protecção da Gemini
+
+O gateway distingue erros de quota diária (`429 RESOURCE_EXHAUSTED` com `GenerateRequestsPerDayPerProject-FreeTier`) de erros transitórios. Ao atingir a quota diária, não faz retries inúteis: o circuito de chamadas fica bloqueado até à próxima meia-noite do horário do Pacífico.
+
+Pedidos directos à Bibi recebem no máximo uma mensagem mecânica de fallback por canal a cada 5 minutos enquanto a Gemini estiver indisponível.
 
 ## Instalação
 
