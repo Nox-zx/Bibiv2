@@ -15,6 +15,14 @@ from safety.guard import SafetyGuard
 LOGGER = logging.getLogger(__name__)
 
 
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 async def handle_message(
     message: discord.Message,
     *,
@@ -81,7 +89,8 @@ async def handle_message(
         attention_state = "inactive"
         if message.guild:
             state = await get_or_create_channel_state(session, message.guild.id, message.channel.id)
-            if state.attention_until and state.attention_until > datetime.now(timezone.utc):
+            attention_until = _as_utc(state.attention_until)
+            if attention_until and attention_until > datetime.now(timezone.utc):
                 attention_state = "engaged" if (mentioned or is_reply) else "aware"
 
         context = await build_cognitive_context(session, perception, attention_state=attention_state)
