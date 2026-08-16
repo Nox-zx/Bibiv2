@@ -3,6 +3,7 @@ from __future__ import annotations
 from database.repositories import get_relationship, get_self_model, get_or_create_channel_state
 from memory.retrieval import retrieve_memories
 from mind.perception import Perception
+from utils.time_context import get_time_context
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -28,6 +29,7 @@ async def build_cognitive_context(
     return {
         "perception": perception.as_dict(),
         "attention_state": attention_state,
+        "time_context": get_time_context(),
         "relationship": {
             "familiarity": relationship.familiarity,
             "trust": relationship.trust,
