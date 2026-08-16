@@ -46,3 +46,7 @@ python main.py
 ## Nota
 
 Os modelos actuais não usam `temperature`, `top_p` ou `top_k` no pedido. A configuração do gateway foi deliberadamente construída sem esses parâmetros.
+
+## Time context
+
+Bibi receives the current date/time from Python using the `Africa/Luanda` timezone. This value is authoritative for present-time questions and relative date references such as today, yesterday, and tomorrow.
