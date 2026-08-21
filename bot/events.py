@@ -11,6 +11,7 @@ from database.models import ChannelState, MessageRecord
 from database.repositories import get_or_create_channel_state, get_or_create_user
 from mind.context import build_cognitive_context
 from mind.perception import Perception
+from mind.world import build_world_context
 from safety.guard import SafetyGuard
 
 LOGGER = logging.getLogger(__name__)
@@ -81,6 +82,8 @@ async def handle_message(
         recent_messages=recent_messages,
     )
 
+    world = build_world_context(message, recent_messages=recent_messages)
+
     async with session_factory() as session:
         await get_or_create_user(session, message.author.id, message.author.display_name)
         if message.guild:
@@ -107,7 +110,9 @@ async def handle_message(
             if attention_until and attention_until > datetime.now(timezone.utc):
                 attention_state = "engaged" if (mentioned or is_reply) else "aware"
 
-        context = await build_cognitive_context(session, perception, attention_state=attention_state)
+        context = await build_cognitive_context(
+            session, perception, attention_state=attention_state, world=world
+        )
         try:
             decision = await cognitive_mind.decide(context)
         except GeminiQuotaExceeded:
