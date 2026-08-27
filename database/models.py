@@ -108,3 +108,85 @@ class DiaryEntry(Base):
     significance: Mapped[float] = mapped_column(Float, default=0.5)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class GuildWorld(Base):
+    __tablename__ = "world_guilds"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    guild_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(100))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+
+class WorldCategory(Base):
+    __tablename__ = "world_categories"
+    __table_args__ = (UniqueConstraint("guild_id", "category_id", name="uq_world_category"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    guild_id: Mapped[int] = mapped_column(Integer, index=True)
+    category_id: Mapped[int] = mapped_column(Integer, index=True)
+    name: Mapped[str] = mapped_column(String(100))
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+
+class WorldChannel(Base):
+    __tablename__ = "world_channels"
+    __table_args__ = (UniqueConstraint("guild_id", "channel_id", name="uq_world_channel"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    guild_id: Mapped[int] = mapped_column(Integer, index=True)
+    channel_id: Mapped[int] = mapped_column(Integer, index=True)
+    name: Mapped[str] = mapped_column(String(100))
+    channel_type: Mapped[str] = mapped_column(String(40))
+    category_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    parent_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    topic: Mapped[str | None] = mapped_column(Text, nullable=True)
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+
+class WorldRole(Base):
+    __tablename__ = "world_roles"
+    __table_args__ = (UniqueConstraint("guild_id", "role_id", name="uq_world_role"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    guild_id: Mapped[int] = mapped_column(Integer, index=True)
+    role_id: Mapped[int] = mapped_column(Integer, index=True)
+    name: Mapped[str] = mapped_column(String(100))
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    managed: Mapped[bool] = mapped_column(Boolean, default=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+
+class GuildMember(Base):
+    __tablename__ = "world_members"
+    __table_args__ = (UniqueConstraint("guild_id", "user_discord_id", name="uq_world_member"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    guild_id: Mapped[int] = mapped_column(Integer, index=True)
+    user_discord_id: Mapped[int] = mapped_column(Integer, index=True)
+    display_name: Mapped[str] = mapped_column(String(100))
+    nickname: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    joined_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+
+class GuildMemberRole(Base):
+    __tablename__ = "world_member_roles"
+    __table_args__ = (
+        UniqueConstraint("guild_id", "user_discord_id", "role_id", name="uq_world_member_role"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    guild_id: Mapped[int] = mapped_column(Integer, index=True)
+    user_discord_id: Mapped[int] = mapped_column(Integer, index=True)
+    role_id: Mapped[int] = mapped_column(Integer, index=True)
