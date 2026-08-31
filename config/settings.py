@@ -52,7 +52,7 @@ class Settings:
             ) or (_required("GEMINI_API_KEY"),),
             guild_id=int(guild_raw) if guild_raw else None,
             creator_id=int(creator_raw) if creator_raw else None,
-            cognitive_model=os.getenv("COGNITIVE_MODEL", "gemini-3.6-flash"),
+            cognitive_model=os.getenv("COGNITIVE_MODEL", "gemini-3.5-flash-lite"),
             reflective_model=os.getenv("REFLECTIVE_MODEL", "gemini-3.5-flash-lite"),
             cognitive_thinking=os.getenv("COGNITIVE_THINKING", "medium"),
             reflective_thinking=os.getenv("REFLECTIVE_THINKING", "low"),
