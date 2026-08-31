@@ -28,7 +28,7 @@ class BibiClient(discord.Client):
         self.tree = app_commands.CommandTree(self)
         self.db_engine = create_engine(settings.database_url)
         self.session_factory = create_session_factory(self.db_engine)
-        gateway = GeminiGateway(settings.gemini_api_key)
+        gateway = GeminiGateway(api_keys=list(settings.gemini_api_keys))
         self.cognitive_mind = CognitiveMind(
             gateway,
             settings.cognitive_model,

@@ -19,7 +19,7 @@ def _required(name: str) -> str:
 @dataclass(frozen=True)
 class Settings:
     discord_token: str
-    gemini_api_key: str
+    gemini_api_keys: tuple[str, ...]
     guild_id: int | None
     creator_id: int | None
     cognitive_model: str
@@ -42,7 +42,14 @@ class Settings:
         creator_raw = os.getenv("CREATOR_ID")
         return cls(
             discord_token=_required("DISCORD_TOKEN"),
-            gemini_api_key=_required("GEMINI_API_KEY"),
+            gemini_api_keys=tuple(
+                key for key in (
+                    os.getenv("GEMINI_API_KEY_1", ""),
+                    os.getenv("GEMINI_API_KEY_2", ""),
+                    os.getenv("GEMINI_API_KEY_3", ""),
+                    os.getenv("GEMINI_API_KEY_4", ""),
+                ) if key.strip()
+            ) or (_required("GEMINI_API_KEY"),),
             guild_id=int(guild_raw) if guild_raw else None,
             creator_id=int(creator_raw) if creator_raw else None,
             cognitive_model=os.getenv("COGNITIVE_MODEL", "gemini-3.6-flash"),
