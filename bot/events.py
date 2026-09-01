@@ -11,13 +11,14 @@ from database.models import ChannelState, MessageRecord
 from database.repositories import get_or_create_channel_state, get_or_create_user
 from mind.context import build_cognitive_context
 from mind.perception import Perception
+from mind.action import ActionController
 from safety.guard import SafetyGuard
 
 LOGGER = logging.getLogger(__name__)
 
-# Prevent a quota/failure fallback from becoming spam when a channel is active.
 _FALLBACK_COOLDOWN_SECONDS = 300
 _fallback_sent_at: dict[int, datetime] = {}
+_action_controller = ActionController()
 
 
 def _as_utc(value: datetime | None) -> datetime | None:
@@ -82,11 +83,23 @@ async def handle_message(
     )
 
     async with session_factory() as session:
-        await get_or_create_user(session, message.author.id, message.author.display_name)
+        await get_or_create_user(
+            session,
+            message.author.id,
+            message.author.display_name,
+        )
+
         if message.guild:
-            state = await get_or_create_channel_state(session, message.guild.id, message.channel.id)
+            state = await get_or_create_channel_state(
+                session,
+                message.guild.id,
+                message.channel.id,
+            )
             if mentioned or is_reply:
-                state.attention_until = datetime.now(timezone.utc) + timedelta(minutes=attention_minutes)
+                state.attention_until = (
+                    datetime.now(timezone.utc)
+                    + timedelta(minutes=attention_minutes)
+                )
 
         session.add(
             MessageRecord(
@@ -102,12 +115,23 @@ async def handle_message(
 
         attention_state = "inactive"
         if message.guild:
-            state = await get_or_create_channel_state(session, message.guild.id, message.channel.id)
+            state = await get_or_create_channel_state(
+                session,
+                message.guild.id,
+                message.channel.id,
+            )
             attention_until = _as_utc(state.attention_until)
             if attention_until and attention_until > datetime.now(timezone.utc):
-                attention_state = "engaged" if (mentioned or is_reply) else "aware"
+                attention_state = (
+                    "engaged" if (mentioned or is_reply) else "aware"
+                )
 
-        context = await build_cognitive_context(session, perception, attention_state=attention_state)
+        context = await build_cognitive_context(
+            session,
+            perception,
+            attention_state=attention_state,
+        )
+
         try:
             decision = await cognitive_mind.decide(context)
         except GeminiQuotaExceeded:
@@ -123,7 +147,10 @@ async def handle_message(
             await session.commit()
             return
         except GeminiTemporarilyUnavailable:
-            LOGGER.exception("Gemini temporarily unavailable for message %s", message.id)
+            LOGGER.exception(
+                "Gemini temporarily unavailable for message %s",
+                message.id,
+            )
             if (mentioned or is_reply) and _should_fallback(message.channel.id):
                 await message.reply(
                     "pera aí, meu cérebro deu uma engasgada kkkk",
@@ -132,18 +159,32 @@ async def handle_message(
             await session.commit()
             return
         except Exception:
-            LOGGER.exception("Cognitive call failed for message %s", message.id)
+            LOGGER.exception(
+                "Cognitive call failed for message %s",
+                message.id,
+            )
             await session.commit()
             return
 
         decision = SafetyGuard().validate_cognitive(decision)
 
-        if decision.participation in {"respond", "ask_clarification"} and decision.response:
-            content = decision.response[:max_response_length]
-            await message.reply(content, mention_author=False)
+        validated_actions = _action_controller.validate(decision)
+        response = _action_controller.response_text(
+            decision,
+            max_response_length,
+        )
 
-        # Memory candidates are deliberately persisted only after the response path completes.
+        # v0.1 only executes the existing safe reply path.
+        # Additional Discord actions are validated but deliberately not
+        # executed until their dedicated versions are implemented.
+        if (
+            decision.participation in {"respond", "ask_clarification"}
+            and response
+        ):
+            await message.reply(response, mention_author=False)
+
         from memory.manager import persist_memory_candidates
+
         await persist_memory_candidates(
             session,
             decision.memory_candidates,
