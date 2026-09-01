@@ -13,8 +13,8 @@ def _int(name: str, default: int) -> int:
 @dataclass(frozen=True)
 class Settings:
     discord_token: str = getenv("DISCORD_TOKEN", "")
-    cognitive_model: str = getenv("COGNITIVE_MODEL", "gemini-2.5-flash-lite")
-    reflective_model: str = getenv("REFLECTIVE_MODEL", "gemini-2.5-flash-lite")
+    cognitive_model: str = getenv("COGNITIVE_MODEL", "gemini-3.5-flash-lite")
+    reflective_model: str = getenv("REFLECTIVE_MODEL", "gemini-3.5-flash-lite")
     database_path: str = getenv("DATABASE_PATH", "data/bibi.db")
     context_message_limit: int = _int("CONTEXT_MESSAGE_LIMIT", 20)
     max_response_length: int = _int("MAX_RESPONSE_LENGTH", 1200)
