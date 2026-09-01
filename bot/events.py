@@ -1,195 +1,200 @@
-from __future__ import annotations
-
-import logging
 from datetime import datetime, timezone, timedelta
-
 import discord
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
-from ai_core.gateway import GeminiQuotaExceeded, GeminiTemporarilyUnavailable
-from database.models import ChannelState, MessageRecord
-from database.repositories import get_or_create_channel_state, get_or_create_user
-from mind.context import build_cognitive_context
 from mind.perception import Perception
-from mind.action import ActionController
-from safety.guard import SafetyGuard
+from mind.attention import Attention
+from mind.world import build_world
+from mind.self_model import SELF_MODEL
+from mind.contracts import CognitiveContext
+from mind.emotion import EmotionalState, time_adjustment
+from memory.store import retrieve, remember
+from database.db import fetchone
 
-LOGGER = logging.getLogger(__name__)
+class MessageProcessor:
+    def __init__(self, bot):
+        self.bot=bot
+        self.attention=Attention()
+        self.emotion=EmotionalState()
 
-_FALLBACK_COOLDOWN_SECONDS = 300
-_fallback_sent_at: dict[int, datetime] = {}
-_action_controller = ActionController()
+    async def process(self, message: discord.Message):
+        recent=[]
+        async for m in message.channel.history(limit=20, before=message):
+            recent.append({
+                "author": m.author.display_name,
+                "author_id": m.author.id,
+                "content": m.content,
+                "time": m.created_at.isoformat(),
+            })
+        recent.reverse()
 
+        direct=self._direct(message)
+        reply=self._reply_to_bibi(message)
+        state=await self._channel_engagement(message)
 
-def _as_utc(value: datetime | None) -> datetime | None:
-    if value is None:
-        return None
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        attention=self.attention.decide(
+            direct=direct,
+            reply=reply,
+            engaged=state,
+            ambient_relevance=False,
+        )
+        if not attention.attend:
+            await self._record(message, direct)
+            return
 
+        world=build_world(message.guild, message.channel, recent)
+        temporal=time_adjustment(world["hour"])
+        self.emotion.energy=max(0,min(1,self.emotion.energy+temporal["energy"]))
+        self.emotion.sociability=max(0,min(1,self.emotion.sociability+temporal["sociability"]))
 
-def _should_fallback(channel_id: int) -> bool:
-    now = datetime.now(timezone.utc)
-    previous = _fallback_sent_at.get(channel_id)
-    if previous and (now - previous).total_seconds() < _FALLBACK_COOLDOWN_SECONDS:
-        return False
-    _fallback_sent_at[channel_id] = now
-    return True
-
-
-async def handle_message(
-    message: discord.Message,
-    *,
-    bot_user_id: int,
-    session_factory: async_sessionmaker[AsyncSession],
-    cognitive_mind,
-    attention_minutes: int,
-    max_response_length: int,
-) -> None:
-    if message.author.bot:
-        return
-
-    is_reply = bool(message.reference and message.reference.message_id)
-    mentioned = bot_user_id in {member.id for member in message.mentions}
-
-    replied_content = None
-    if is_reply and message.reference and isinstance(message.reference.resolved, discord.Message):
-        replied_content = message.reference.resolved.content
-
-    recent_messages = []
-    async for item in message.channel.history(limit=25):
-        if item.id == message.id:
-            continue
-        recent_messages.append({
-            "author_id": item.author.id,
-            "author_name": item.author.display_name,
-            "content": item.content,
-        })
-    recent_messages.reverse()
-
-    perception = Perception(
-        message_id=message.id,
-        guild_id=message.guild.id if message.guild else None,
-        channel_id=message.channel.id,
-        author_id=message.author.id,
-        author_name=message.author.display_name,
-        content=message.content,
-        timestamp=datetime.now(timezone.utc),
-        is_reply=is_reply,
-        mentioned_bibi=mentioned,
-        replied_message_content=replied_content,
-        recent_messages=recent_messages,
-    )
-
-    async with session_factory() as session:
-        await get_or_create_user(
-            session,
-            message.author.id,
-            message.author.display_name,
+        relationship=await self._relationship(message)
+        terms=message.content.replace("?"," ").split()[:12]
+        memories=await retrieve(
+            self.bot.db, terms,
+            guild_id=message.guild.id if message.guild else None,
+            user_id=message.author.id,
         )
 
-        if message.guild:
-            state = await get_or_create_channel_state(
-                session,
-                message.guild.id,
-                message.channel.id,
-            )
-            if mentioned or is_reply:
-                state.attention_until = (
-                    datetime.now(timezone.utc)
-                    + timedelta(minutes=attention_minutes)
-                )
-
-        session.add(
-            MessageRecord(
-                discord_message_id=message.id,
+        context=CognitiveContext(
+            self_model=SELF_MODEL,
+            emotional_state=self.emotion.as_dict(),
+            world=world,
+            perception=Perception(
+                message_id=message.id,
                 guild_id=message.guild.id if message.guild else None,
                 channel_id=message.channel.id,
-                author_discord_id=message.author.id,
+                author_id=message.author.id,
+                author_name=message.author.display_name,
                 content=message.content,
-                is_reply=is_reply,
-                mentioned_bibi=mentioned,
-            )
-        )
-
-        attention_state = "inactive"
-        if message.guild:
-            state = await get_or_create_channel_state(
-                session,
-                message.guild.id,
-                message.channel.id,
-            )
-            attention_until = _as_utc(state.attention_until)
-            if attention_until and attention_until > datetime.now(timezone.utc):
-                attention_state = (
-                    "engaged" if (mentioned or is_reply) else "aware"
-                )
-
-        context = await build_cognitive_context(
-            session,
-            perception,
-            attention_state=attention_state,
+                created_at=message.created_at,
+                direct_address=direct,
+                reply_to_bibi=reply,
+                recent_messages=recent,
+            ).as_dict(),
+            attention=attention.__dict__,
+            relationship=relationship,
+            memories=memories,
+            conversation=recent,
+            temporal_context=temporal,
         )
 
         try:
-            decision = await cognitive_mind.decide(context)
-        except GeminiQuotaExceeded:
-            LOGGER.warning(
-                "Gemini daily quota exhausted; skipping cognitive response for message %s",
-                message.id,
-            )
-            if (mentioned or is_reply) and _should_fallback(message.channel.id):
-                await message.reply(
-                    "tô sem cérebro por agora kkkk tenta falar comigo mais tarde",
-                    mention_author=False,
-                )
-            await session.commit()
-            return
-        except GeminiTemporarilyUnavailable:
-            LOGGER.exception(
-                "Gemini temporarily unavailable for message %s",
-                message.id,
-            )
-            if (mentioned or is_reply) and _should_fallback(message.channel.id):
-                await message.reply(
-                    "pera aí, meu cérebro deu uma engasgada kkkk",
-                    mention_author=False,
-                )
-            await session.commit()
-            return
+            decision=await self.bot.cognitive.decide(context.as_dict())
         except Exception:
-            LOGGER.exception(
-                "Cognitive call failed for message %s",
-                message.id,
-            )
-            await session.commit()
+            # Do not expose API internals to users.
+            await self._record(message, direct)
             return
 
-        decision = SafetyGuard().validate_cognitive(decision)
+        await self._record(message, direct)
 
-        validated_actions = _action_controller.validate(decision)
-        response = _action_controller.response_text(
-            decision,
-            max_response_length,
+        if decision.memory_candidates:
+            for mem in decision.memory_candidates:
+                await remember(
+                    self.bot.db,
+                    mem.kind,
+                    mem.content,
+                    guild_id=message.guild.id if message.guild else None,
+                    user_id=mem.user_id or message.author.id,
+                    importance=mem.importance,
+                )
+
+        self._apply_emotion(decision.emotion)
+
+        if decision.should_respond and decision.response:
+            text=decision.response.strip()[:1200]
+            if text:
+                await message.reply(text, mention_author=False)
+                await self._set_channel_attention(message)
+
+    def _direct(self,message):
+        if self.bot.user and self.bot.user.mentioned_in(message):
+            return True
+        lowered=message.content.lower().strip()
+        return any(lowered.startswith(x) for x in ("bibi ", "bibi,", "bibi:"))
+
+    def _reply_to_bibi(self,message):
+        ref=message.reference
+        return bool(ref and ref.resolved and getattr(ref.resolved, "author", None) == self.bot.user)
+
+    async def _channel_engagement(self, message):
+        if not message.guild:
+            return False
+        row=await fetchone(
+            self.bot.db,
+            "SELECT attention_until FROM channel_state WHERE guild_id=? AND channel_id=?",
+            (message.guild.id, message.channel.id),
         )
+        if not row or not row["attention_until"]:
+            return False
+        try:
+            return datetime.fromisoformat(row["attention_until"]) > datetime.now(timezone.utc)
+        except ValueError:
+            return False
 
-        # v0.1 only executes the existing safe reply path.
-        # Additional Discord actions are validated but deliberately not
-        # executed until their dedicated versions are implemented.
-        if (
-            decision.participation in {"respond", "ask_clarification"}
-            and response
-        ):
-            await message.reply(response, mention_author=False)
-
-        from memory.manager import persist_memory_candidates
-
-        await persist_memory_candidates(
-            session,
-            decision.memory_candidates,
-            guild_id=message.guild.id if message.guild else None,
-            channel_id=message.channel.id,
+    async def _set_channel_attention(self, message):
+        if not message.guild:
+            return
+        now=datetime.now(timezone.utc)
+        until=(now+timedelta(minutes=20)).isoformat()
+        await self.bot.db.execute(
+            """INSERT INTO channel_state
+               (guild_id,channel_id,attention_until,last_bibi_message)
+               VALUES(?,?,?,?)
+               ON CONFLICT(guild_id,channel_id)
+               DO UPDATE SET
+                 attention_until=excluded.attention_until,
+                 last_bibi_message=excluded.last_bibi_message""",
+            (message.guild.id, message.channel.id, until, now.isoformat()),
         )
+        await self.bot.db.commit()
 
-        await session.commit()
+    async def _record(self,message,direct):
+        guild_id=message.guild.id if message.guild else None
+        now=datetime.now(timezone.utc).isoformat()
+        await self.bot.db.execute(
+            """INSERT OR IGNORE INTO messages(discord_id,guild_id,channel_id,author_id,content,created_at,is_direct)
+               VALUES(?,?,?,?,?,?,?)""",
+            (message.id,guild_id,message.channel.id,message.author.id,message.content,now,int(direct)),
+        )
+        await self.bot.db.execute(
+            """INSERT INTO users(id,name,first_seen,last_seen,message_count)
+               VALUES(?,?,?,?,1)
+               ON CONFLICT(id) DO UPDATE SET name=excluded.name,last_seen=excluded.last_seen,message_count=users.message_count+1""",
+            (message.author.id,message.author.display_name,now,now),
+        )
+        if guild_id:
+            await self.bot.db.execute(
+                """INSERT INTO relationships(guild_id,user_id,familiarity,trust,closeness,last_interaction)
+                   VALUES(?,?,?,?,?,?)
+                   ON CONFLICT(guild_id,user_id) DO UPDATE SET familiarity=MIN(1,familiarity+0.01),last_interaction=excluded.last_interaction""",
+                (guild_id,message.author.id,0.01,0.5,0,now),
+            )
+            await self.bot.db.execute(
+                """INSERT INTO channel_state(guild_id,channel_id,last_activity)
+                   VALUES(?,?,?)
+                   ON CONFLICT(guild_id,channel_id) DO UPDATE SET last_activity=excluded.last_activity""",
+                (guild_id,message.channel.id,now),
+            )
+        await self.bot.db.commit()
+
+    async def _relationship(self,message):
+        if not message.guild:
+            return {}
+        row=await fetchone(self.bot.db, 
+            "SELECT familiarity,trust,closeness,impression,last_interaction FROM relationships WHERE guild_id=? AND user_id=?",
+            (message.guild.id,message.author.id),
+        )
+        return dict(row) if row else {}
+
+    def _apply_emotion(self,label):
+        label=(label or "").lower()
+        if "happy" in label or "joy" in label:
+            self.emotion.mood="happy"
+            self.emotion.sociability=min(1,self.emotion.sociability+0.06)
+        elif "sad" in label:
+            self.emotion.mood="sad"
+        elif "annoy" in label or "frustr" in label:
+            self.emotion.mood="annoyed"
+        elif "curious" in label:
+            self.emotion.mood="curious"
+            self.emotion.curiosity=min(1,self.emotion.curiosity+0.08)
+        elif label:
+            self.emotion.mood=label[:40]
